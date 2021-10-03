@@ -30,16 +30,11 @@ class InnerTubeException(Exception):
 
 
 class InnerTubeVideo:
-
+    """
+    Container to define a Youtube video.
+    """
     def __init__(self, **kwargs):
         """
-        {"title": title,
-                 "videoId": videoId,
-                 "thumbs": thumbs,
-                 "duration": duration,
-                 "channel": channel,
-                 "channel":
-                 "description": shortDescription}
 
         :param kwargs:
         """
@@ -54,10 +49,53 @@ class InnerTubeVideo:
         else:
             self.duration = kwargs.get("duration", 0.0)
         if kwargs.get("streamingData"):
-            self.buckets = InnerTube.fmt_responses(kwargs.get("streamingData"))
+            self.buckets = self.fmt_responses(kwargs.get("streamingData"))
+
+    @classmethod
+    def fmt_responses(cls, streamingData: dict):
+        """
+        Converts streamingData into dictionaries called buckets.
+        :param streamingData:
+        :return:
+        """
+        buckets = {}
+        for k, v in streamingData.items():
+            if isinstance(v, list):
+                for fmt in v:
+                    itag_bucket = math.floor(fmt.get('itag', 0) / 100)
+                    bucket = buckets.get(itag_bucket, {})
+                    print(fmt)
+                    mime = fmt.get("mimeType")
+                    if "video/" in mime and "audio/" in mime:
+                        stream_type = "mixed"
+                    elif "video/" in mime:
+                        stream_type = "video"
+                    elif "audio/" in mime:
+                        stream_type = "audio"
+                    else:
+                        stream_type = "unknown"
+                    if fmt.get("audioQuality") is not None and any([stream_type == "mixed", stream_type == "audio"]):
+                        quality = fmt.get("audioQuality")
+                    else:
+                        quality = fmt.get("quality")
+                    bucket[fmt.get('itag', 0)] = {
+                        "url": fmt.get("url"),
+                        "type": stream_type,
+                        "bitrate": fmt.get("bitrate"),
+                        "contentLength": fmt.get("contentLength"),
+                        "mimeType": mime,
+                        "quality": quality
+                    }
+                    buckets[itag_bucket] = bucket
+        return buckets
 
     @classmethod
     def from_player(cls, player: dict):
+        """
+        Converts a "player" endpoint to
+        :param player:
+        :return:
+        """
         title = player["videoDetails"]["title"]
         videoId = player["videoDetails"]["videoId"]
         duration = float(player["videoDetails"]["lengthSeconds"])
@@ -70,6 +108,19 @@ class InnerTubeVideo:
         cls(title=title, videoId=videoId, duration=duration, thumbnails=thumbs,
             channel={"name": name_channel, "url": url_channel},
             description=shortDescription)
+
+    @classmethod
+    async def download(cls, fileLocation, bucket: dict, itag_preference):
+        itag_raw = {}
+        for v in bucket.values():
+            for k, v2 in v.items():
+                itag_raw[k] = v2
+        if isinstance(itag_preference, list):
+            for itag in itag_preference:
+                it = itag_raw.get(itag)
+                if it is not None:
+                    async with aiohttp.ClientSession() as session:
+                        return await fsDownloader.saveThread(it['url'], session, fileLocation)
 
 
 class InnerTube:
@@ -126,53 +177,7 @@ class InnerTube:
         :return:
         """
 
-        return [InnerTubeVideo.from_player(player_data)]
-
-    @classmethod
-    def fmt_responses(cls, streamingData: dict):
-        buckets = {}
-        for k, v in streamingData.items():
-            if isinstance(v, list):
-                for fmt in v:
-                    itag_bucket = math.floor(fmt.get('itag', 0) / 100)
-                    bucket = buckets.get(itag_bucket, {})
-                    print(fmt)
-                    mime = fmt.get("mimeType")
-                    if "video/" in mime and "audio/" in mime:
-                        stream_type = "mixed"
-                    elif "video/" in mime:
-                        stream_type = "video"
-                    elif "audio/" in mime:
-                        stream_type = "audio"
-                    else:
-                        stream_type = "unknown"
-                    if fmt.get("audioQuality") is not None and any([stream_type == "mixed", stream_type == "audio"]):
-                        quality = fmt.get("audioQuality")
-                    else:
-                        quality = fmt.get("quality")
-                    bucket[fmt.get('itag', 0)] = {
-                        "url": fmt.get("url"),
-                        "type": stream_type,
-                        "bitrate": fmt.get("bitrate"),
-                        "contentLength": fmt.get("contentLength"),
-                        "mimeType": mime,
-                        "quality": quality
-                    }
-                    buckets[itag_bucket] = bucket
-        return buckets
-
-    @classmethod
-    async def download(cls, fileLocation, bucket: dict, itag_preference):
-        itag_raw = {}
-        for v in bucket.values():
-            for k, v2 in v.items():
-                itag_raw[k] = v2
-        if isinstance(itag_preference, list):
-            for itag in itag_preference:
-                it = itag_raw.get(itag)
-                if it is not None:
-                    async with aiohttp.ClientSession() as session:
-                        return await fsDownloader.saveThread(it['url'], session, fileLocation)
+        return InnerTubeVideo.from_player(player_data)
 
     @property
     async def JSCode(self):
